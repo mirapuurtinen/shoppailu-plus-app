@@ -679,19 +679,75 @@ function ResultCard({item,rank,toggleFav,addList,isFav,isPlus,goPlus,maxPrice}) 
   );
 }
 
-function Results({data,loading,isPlus,goPlus,favs,toggleFav,addList}) {
+/* ── Tuotematching: ryhmittää saman tuotteen eri kaupoista ── */
+const MATCH_STOPWORDS=/\b(the|and|with|for|by|in|of|fi|se|en|sv|kpl|pcs|pack|set|uusi|new|original|ml|g|l|kg|cl|oz)\b/gi;
+function normalizeForMatch(title){
+  return (title||"").toLowerCase()
+    .replace(/(\d+)\s*(ml|g|l|kg|cl|oz)/gi,"$1$2")
+    .replace(MATCH_STOPWORDS," ")
+    .replace(/[^\w\d\s]/g," ")
+    .replace(/\s+/g," ").trim();
+}
+function titleSimilarity(a,b){
+  const wa=new Set(normalizeForMatch(a).split(" ").filter(w=>w.length>2));
+  const wb=new Set(normalizeForMatch(b).split(" ").filter(w=>w.length>2));
+  const inter=[...wa].filter(w=>wb.has(w)).length;
+  const union=new Set([...wa,...wb]).size;
+  return union>0?inter/union:0;
+}
+function groupProducts(items){
+  const groups=[];const used=new Set();
+  for(let i=0;i<items.length;i++){
+    if(used.has(i))continue;
+    const g=[items[i]];used.add(i);
+    for(let j=i+1;j<items.length;j++){
+      if(used.has(j))continue;
+      if(titleSimilarity(items[i].title,items[j].title)>=0.65){g.push(items[j]);used.add(j);}
+    }
+    g.sort((a,b)=>(a._total??9999)-(b._total??9999));
+    groups.push(g);
+  }
+  groups.sort((a,b)=>(a[0]._total??9999)-(b[0]._total??9999));
+  return groups;
+}
+
+/* ── GroupedResultCard: näyttää yhden tuotteen kaikki kaupat ── */
+function GroupedResultCard({group,toggleFav,addList,favs,isPlus,goPlus,maxPrice}){
+  const[expanded,setExpanded]=useState(false);
+  const best=group[0];
+  const others=group.slice(1);
+  if(group.length===1)return <ResultCard item={best} rank={null} maxPrice={maxPrice} toggleFav={toggleFav} addList={addList} isFav={favs.some(f=>f.link===best.link)} isPlus={isPlus} goPlus={goPlus}/>;
+  return(
+    <div style={{marginBottom:10}}>
+      <ResultCard item={best} rank={null} maxPrice={maxPrice} toggleFav={toggleFav} addList={addList} isFav={favs.some(f=>f.link===best.link)} isPlus={isPlus} goPlus={goPlus}/>
+      <button onClick={()=>setExpanded(!expanded)}
+        style={{width:"100%",background:S.rs,border:"none",borderRadius:"0 0 14px 14px",padding:"6px 0",fontSize:12,color:S.mut,cursor:"pointer",fontFamily:FF,marginTop:-4}}>
+        {expanded?`▲ Piilota muut kaupat`:`▼ ${others.length} muuta kauppaa halvimmillaan ${eur(others[0]._total??others[0].price)}`}
+      </button>
+      {expanded&&others.map((item,i)=>(
+        <div key={i} style={{borderLeft:"3px solid "+S.brd,marginLeft:8,paddingLeft:4}}>
+          <ResultCard item={item} rank={null} maxPrice={maxPrice} toggleFav={toggleFav} addList={addList} isFav={favs.some(f=>f.link===item.link)} isPlus={isPlus} goPlus={goPlus}/>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Results({data,loading,isPlus,goPlus,favs,toggleFav,addList,grouped=true}) {
   if(loading)return <Spinner/>;
   if(!data)return null;
   if(!data.ok)return <Err msg={data.error}/>;
-  // Data tulee jo suodatettuna ja järjestettynä searchProducts-funktiosta.
-  // Suojasuodatus: poistetaan vielä mahdolliset ulkomaiset tai estetyt linkit.
   const items=(data.results||[]).filter(r=>isFinnish(r)&&hasUsableLink(r));
   if(items.length===0)return <p style={{color:S.mut,fontSize:13,marginTop:12}}>Ei tuloksia suomalaisista verkkokaupoista. Kokeile toista hakusanaa tai poista jokin suodatin.</p>;
   const maxP=items.reduce((m,x)=>x.price!=null&&x.price>m?x.price:m,0);
+  const groups=grouped?groupProducts(items):items.map(i=>[i]);
+  const uniqueStores=new Set(items.map(i=>i.store).filter(Boolean)).size;
   return(
     <div style={{marginTop:8}}>
-      <p style={{fontSize:12,color:S.mut,marginBottom:8,fontFamily:FF}}>{items.length} tulosta suomalaisista verkkokaupoista</p>
-      {items.map((item,i)=><ResultCard key={i} item={item} rank={i} maxPrice={maxP} toggleFav={toggleFav} addList={addList} isFav={favs.some(f=>f.link===item.link)} isPlus={isPlus} goPlus={goPlus}/>)}
+      <p style={{fontSize:12,color:S.mut,marginBottom:8,fontFamily:FF}}>
+        {groups.length} tuotetta · {items.length} tulosta · {uniqueStores} kauppaa
+      </p>
+      {groups.map((g,i)=><GroupedResultCard key={i} group={g} maxPrice={maxP} toggleFav={toggleFav} addList={addList} favs={favs} isPlus={isPlus} goPlus={goPlus}/>)}
     </div>
   );
 }
@@ -1727,13 +1783,40 @@ function ParasTool({back,isPlus,goPlus,favs,toggleFav,addList,profile}) {
 function VertailuTool({back,isPlus,goPlus,favs,toggleFav,addList}) {
   const[qa,setQa]=useState("");const[qb,setQb]=useState("");const[loading,setLoading]=useState(false);const[da,setDa]=useState(null);const[db,setDb]=useState(null);
   const run=async()=>{if(!qa.trim()||!qb.trim())return;setLoading(true);const[a,b]=await Promise.all([searchProducts(qa),searchProducts(qb)]);setDa(a);setDb(b);setLoading(false);};
+  const bestA=da?.ok?(da.results||[]).filter(r=>isFinnish(r)&&r.price!=null)[0]:null;
+  const bestB=db?.ok?(db.results||[]).filter(r=>isFinnish(r)&&r.price!=null)[0]:null;
   return(<div><ToolHeader label="Tuotevertailu" back={back}/>
-    <input value={qa} onChange={e=>setQa(e.target.value)} placeholder="Tuote A" style={{...inp,width:"100%",marginBottom:8}}/>
-    <input value={qb} onChange={e=>setQb(e.target.value)} placeholder="Tuote B" style={{...inp,width:"100%",marginBottom:8}}/>
-    <button onClick={run} style={{...btn(S.ink),width:"100%",marginBottom:10}}>Vertaa</button>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+      <input value={qa} onChange={e=>setQa(e.target.value)} placeholder="Tuote A" style={{...inp,fontSize:12.5}}/>
+      <input value={qb} onChange={e=>setQb(e.target.value)} placeholder="Tuote B" style={{...inp,fontSize:12.5}}/>
+    </div>
+    <button onClick={run} disabled={!qa.trim()||!qb.trim()} style={{...btn(S.ink),width:"100%",marginBottom:10}}>Vertaa</button>
     {loading&&<Spinner/>}
-    {!loading&&da&&<><p style={{fontWeight:600,fontSize:12,color:S.mut,marginBottom:4}}>Tuote A</p><Results data={da} loading={false} isPlus={isPlus} goPlus={goPlus} favs={favs} toggleFav={toggleFav} addList={addList}/></>}
-    {!loading&&db&&<><p style={{fontWeight:600,fontSize:12,color:S.mut,marginBottom:4,marginTop:12}}>Tuote B</p><Results data={db} loading={false} isPlus={isPlus} goPlus={goPlus} favs={favs} toggleFav={toggleFav} addList={addList}/></>}
+    {!loading&&bestA&&bestB&&(
+      <div style={{...card(),marginBottom:12,padding:14}}>
+        <div style={{fontSize:12,fontWeight:600,color:S.mut,marginBottom:10,textAlign:"center"}}>Halvin hinta vertailussa</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr auto 1fr",gap:8,alignItems:"center"}}>
+          <div style={{textAlign:"center",padding:"10px 8px",borderRadius:12,background:bestA._total<=bestB._total?"#F0FAF0":S.rs,border:"2px solid "+(bestA._total<=bestB._total?S.grn:S.brd)}}>
+            <div style={{fontSize:10,color:S.mut,marginBottom:4,lineHeight:1.3}}>{bestA.title?.slice(0,40)}</div>
+            <div style={{fontSize:18,fontWeight:700,color:bestA._total<=bestB._total?S.grn:S.ink}}>{eur(bestA._total??bestA.price)}</div>
+            <div style={{fontSize:10,color:S.mut}}>{bestA.store}</div>
+            {bestA._total<=bestB._total&&<div style={{fontSize:10,color:S.grn,fontWeight:600,marginTop:2}}>✓ Halvempi</div>}
+          </div>
+          <div style={{fontSize:12,color:S.mut,fontWeight:600}}>vs</div>
+          <div style={{textAlign:"center",padding:"10px 8px",borderRadius:12,background:bestB._total<bestA._total?"#F0FAF0":S.rs,border:"2px solid "+(bestB._total<bestA._total?S.grn:S.brd)}}>
+            <div style={{fontSize:10,color:S.mut,marginBottom:4,lineHeight:1.3}}>{bestB.title?.slice(0,40)}</div>
+            <div style={{fontSize:18,fontWeight:700,color:bestB._total<bestA._total?S.grn:S.ink}}>{eur(bestB._total??bestB.price)}</div>
+            <div style={{fontSize:10,color:S.mut}}>{bestB.store}</div>
+            {bestB._total<bestA._total&&<div style={{fontSize:10,color:S.grn,fontWeight:600,marginTop:2}}>✓ Halvempi</div>}
+          </div>
+        </div>
+        {bestA._total!=null&&bestB._total!=null&&<div style={{fontSize:11,color:S.mut,textAlign:"center",marginTop:8}}>
+          Hintaero: <strong>{eur(Math.abs(bestA._total-bestB._total))}</strong>
+        </div>}
+      </div>
+    )}
+    {!loading&&da&&<><p style={{fontWeight:600,fontSize:12,color:S.mut,marginBottom:4}}>Kaikki tulokset — Tuote A</p><Results data={da} loading={false} isPlus={isPlus} goPlus={goPlus} favs={favs} toggleFav={toggleFav} addList={addList}/></>}
+    {!loading&&db&&<><p style={{fontWeight:600,fontSize:12,color:S.mut,marginBottom:4,marginTop:12}}>Kaikki tulokset — Tuote B</p><Results data={db} loading={false} isPlus={isPlus} goPlus={goPlus} favs={favs} toggleFav={toggleFav} addList={addList}/></>}
   </div>);
 }
 
