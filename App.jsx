@@ -2717,6 +2717,8 @@ function Auth({onSkip}) {
       }else{
         await setPersistence(fbAuth,stayLoggedIn?browserLocalPersistence:browserSessionPersistence);
         const cred=await signInWithEmailAndPassword(fbAuth,f.email,f.pw);
+        // Reload pakottaa tuoreen emailVerified-arvon — vanhentunut cache voi näyttää false vaikka on vahvistettu
+        await cred.user.reload();
         if(!cred.user.emailVerified){
           await signOut(fbAuth);
           setVerifyPending({email:f.email,pw:f.pw,blocked:true});
@@ -2737,6 +2739,22 @@ function Auth({onSkip}) {
       setResendOk(true);
       startResendCooldown();
     }catch(e){setError("Virhe lähetyksessä. Tarkista sähköposti ja salasana.");}
+    setLoading(false);
+  };
+
+  const checkVerification=async()=>{
+    setLoading(true);setError("");
+    try{
+      const cred=await signInWithEmailAndPassword(fbAuth,verifyPending.email,verifyPending.pw);
+      await cred.user.reload();
+      if(cred.user.emailVerified){
+        // Vahvistus onnistui — onAuthStateChanged hoitaa siirtymän sovellukseen
+        setVerifyPending(null);
+      }else{
+        await signOut(fbAuth);
+        setError("Sähköpostiosoitetta ei ole vielä vahvistettu. Klikkaa sähköpostissa olevaa vahvistuslinkkiä.");
+      }
+    }catch(e){setError("Virhe. Tarkista sähköposti ja salasana.");}
     setLoading(false);
   };
 
@@ -2785,6 +2803,10 @@ function Auth({onSkip}) {
         <button onClick={resendVerification} disabled={resendCooldown>0||loading}
           style={{...btn(resendCooldown>0?S.brd:S.ink,resendCooldown>0?S.mut:S.wh),width:"100%",padding:"12px 0",marginBottom:12}}>
           {loading?"⏳ Lähetetään…":resendCooldown>0?`Lähetä uudelleen (${resendCooldown}s)`:"Lähetä vahvistusviesti uudelleen"}
+        </button>
+        <button onClick={checkVerification} disabled={loading}
+          style={{...btn(S.rose,S.wh),width:"100%",padding:"12px 0",marginBottom:12}}>
+          {loading?"⏳ Tarkistetaan…":"✓ Olen vahvistanut sähköpostini"}
         </button>
         <button onClick={()=>{setVerifyPending(null);setMode("login");setError("");}}
           style={{background:"none",border:"none",color:S.mut,fontSize:12.5,textDecoration:"underline",cursor:"pointer",fontFamily:FF,textAlign:"center"}}>
@@ -2948,7 +2970,11 @@ function App() {
       // Blokeeraa rekisteröintivirran aikana — estää kaikki profiilivilahdukset
       if(_suppressAuthChange)return;
       // Vahvistamaton käyttäjä ei saa avata sovellusta
-      if(user&&!user.emailVerified){setFbUser(null);return;}
+      // Reload pakottaa tuoreen emailVerified-arvon Firebasesta (cache voi olla vanhentunut)
+      if(user&&!user.emailVerified){
+        try{await user.reload();}catch{}
+        if(!user.emailVerified){setFbUser(null);return;}
+      }
       setFbUser(user);
       if(user){
         try{
