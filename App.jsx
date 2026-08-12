@@ -2844,7 +2844,6 @@ function Auth({onSkip}) {
         {loading?"⏳ Ladataan…":mode==="register"?"Luo tili":"Kirjaudu"}
       </button>
       {mode==="login"&&<button onClick={resetPw} style={{background:"none",border:"none",color:S.mut,fontSize:12,textDecoration:"underline",marginTop:12,cursor:"pointer",fontFamily:FF}}>Unohditko salasanan?</button>}
-      <button onClick={onSkip} style={{background:"none",border:"none",color:S.mut,fontSize:12.5,textDecoration:"underline",marginTop:8,cursor:"pointer",fontFamily:FF}}>Jatka ilman kirjautumista</button>
     </div>
   );
 }
@@ -3225,7 +3224,7 @@ function App() {
   const NAV=[["koti","🏠","Koti"],["haku","🔍","Haku"],["ostoslista","📋","Ostoslista"],["ai","✨","AI"],["plus","👑","PLUS+"],["profiili","👤","Profiili"]];
 
   if(fbUser===undefined)return<div style={{maxWidth:480,margin:"0 auto",minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:S.bg}}><Spinner label="Ladataan…"/></div>;
-  if(!fbUser&&!skipped)return<Auth onSkip={()=>setSkipped(true)}/>;
+  if(!fbUser)return<Auth onSkip={()=>{}}/>;
 
   const auth={loggedIn:!!fbUser,name:userName||fbUser?.displayName||fbUser?.email?.split("@")[0]||"",email:fbUser?.email||"",memberSince:fbUser?.metadata?.creationTime||null,emailVerified:fbUser?.emailVerified||false};
 
