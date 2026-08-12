@@ -2734,11 +2734,36 @@ function Auth({onSkip}) {
     setLoading(true);setResendOk(false);setError("");
     try{
       const cred=await signInWithEmailAndPassword(fbAuth,verifyPending.email,verifyPending.pw);
-      await sendEmailVerification(cred.user);
-      await signOut(fbAuth);
-      setResendOk(true);
-      startResendCooldown();
-    }catch(e){setError("Virhe lähetyksessä. Tarkista sähköposti ja salasana.");}
+      await cred.user.reload();
+      if(cred.user.emailVerified){
+        // Käyttäjä on jo vahvistanut — päästetään suoraan sisään
+        setVerifyPending(null);
+        setLoading(false);return;
+      }
+      try{
+        await sendEmailVerification(cred.user);
+        await signOut(fbAuth);
+        setResendOk(true);
+        startResendCooldown();
+      }catch(e2){
+        await signOut(fbAuth);
+        if(e2.code==="auth/too-many-requests"){
+          setError("Liian monta yritystä. Odota hetki ennen uudelleenlähetystä.");
+          startResendCooldown();
+        }else{
+          setError("Viestin lähetys epäonnistui. Yritä hetken kuluttua uudelleen.");
+        }
+      }
+    }catch(e){
+      if(e.code==="auth/invalid-credential"||e.code==="auth/wrong-password"){
+        setError("Väärä salasana. Yritä kirjautua sisään uudelleen.");
+      }else if(e.code==="auth/too-many-requests"){
+        setError("Liian monta yritystä. Odota hetki.");
+        startResendCooldown();
+      }else{
+        setError("Virhe: "+(e.message||e.code||"tuntematon virhe"));
+      }
+    }
     setLoading(false);
   };
 
