@@ -1873,7 +1873,9 @@ function AsuTool({back,isPlus,goPlus,favs,toggleFav,addList,profile}) {
     <button onClick={run} style={{...btn(S.ink),width:"100%",marginBottom:10}}>Hae asukokonaisuus</button>
     {loading&&<Spinner/>}
     {!loading&&picks?.error&&<Err msg={picks.error}/>}
-    {!loading&&picks?.chosen&&<>{picks.chosen.length===0&&<p style={{fontSize:12.5,color:S.mut}}>Budjetti ei riittänyt.</p>}{picks.chosen.map((it,i)=><ResultCard key={i} item={it} rank={null} toggleFav={toggleFav} addList={addList} isFav={favs.some(f=>f.link===it.link)} isPlus={isPlus} goPlus={goPlus}/>)}{picks.total>0&&<div style={{display:"flex",justifyContent:"space-between",marginTop:4}}><span style={{fontWeight:600,fontSize:12.5}}>Yhteensä</span><span style={{fontWeight:700,fontFamily:"monospace",fontSize:14}}>{eur(picks.total)}</span></div>}</>}
+    {!loading&&picks?.chosen&&<>{picks.chosen.length===0&&<p style={{fontSize:12.5,color:S.mut}}>Budjetti ei riittänyt.</p>}
+    {groupProducts(picks.chosen).map((g,i)=><GroupedResultCard key={i} group={g} maxPrice={budget} toggleFav={toggleFav} addList={addList} favs={favs} isPlus={isPlus} goPlus={goPlus}/>)}
+    {picks.total>0&&<div style={{display:"flex",justifyContent:"space-between",marginTop:4}}><span style={{fontWeight:600,fontSize:12.5}}>Yhteensä</span><span style={{fontWeight:700,fontFamily:"monospace",fontSize:14}}>{eur(picks.total)}</span></div>}</>}
   </div>);
 }
 
