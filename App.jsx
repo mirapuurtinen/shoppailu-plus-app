@@ -2369,7 +2369,7 @@ function ScreenProfiili({profile,setProfile,auth,onNameChange,changePassword,cha
         <div style={{fontSize:28,filter:"drop-shadow(0 2px 6px rgba(0,0,0,0.3))"}}>👑</div>
         <div style={{flex:1}}>
           <div style={{fontSize:13,fontWeight:500,color:"#fff"}}>Shoppailu <span style={{color:"#FFD700"}}>PLUS+</span></div>
-          <div style={{fontSize:11,color:"rgba(255,255,255,0.65)",marginTop:2}}>{isPlus?"Tilauksesi on aktiivinen":{`${PLUS_PRICE} · Peru milloin tahansa`}}</div>
+          <div style={{fontSize:11,color:"rgba(255,255,255,0.65)",marginTop:2}}>{isPlus?"Tilauksesi on aktiivinen":`${PLUS_PRICE} · Peru milloin tahansa`}</div>
         </div>
         <div style={{fontSize:11,color:"rgba(255,255,255,0.8)",fontWeight:500,flexShrink:0}}>{isPlus?"Hallitse →":"Aktivoi →"}</div>
       </div>
