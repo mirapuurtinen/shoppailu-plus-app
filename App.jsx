@@ -2629,18 +2629,25 @@ function ScreenProfiili({profile,setProfile,auth,onNameChange,changePassword,cha
 }
 
 /* ── AUTH ── */
-function Auth({onSkip}) {
+function Auth({onSkip,unverifiedUser,onUnverifiedCleared}) {
   const[mode,setMode]=useState("register");
   const[f,setF]=useState({name:"",email:"",pw:""});
   const[stayLoggedIn,setStayLoggedIn]=useState(false);
   const[loading,setLoading]=useState(false);
   const[error,setError]=useState("");
   const[resetSent,setResetSent]=useState(false);
-  // Sähköpostin vahvistus -tila: {email,pw} kun odotellaan vahvistusta
+  // verifyPending: {email, pw?} — pw voi puuttua jos käyttäjä avasi sovelluksen uudelleen
   const[verifyPending,setVerifyPending]=useState(null);
   const[resendCooldown,setResendCooldown]=useState(0);
   const resendTimerRef=useRef(null);
   const[resendOk,setResendOk]=useState(false);
+
+  // Jos unverifiedUser saapuu propseissa (sovelluksen uudelleenavauksessa), näytä vahvistusnäkymä heti
+  useEffect(()=>{
+    if(unverifiedUser&&!verifyPending){
+      setVerifyPending({email:unverifiedUser.email}); // ei pw — käytetään fbAuth.currentUser
+    }
+  },[unverifiedUser]);
 
   const s=(k,v)=>{setF({...f,[k]:v});setError("");};
   const ERRS={
@@ -2685,19 +2692,24 @@ function Auth({onSkip}) {
             cred=await createUserWithEmailAndPassword(fbAuth,f.email,f.pw);
           }catch(e){
             if(e.code==="auth/email-already-in-use"){
+              // Tili on jo olemassa — tarkista onko vahvistettu
               try{
                 const existing=await signInWithEmailAndPassword(fbAuth,f.email,f.pw);
+                await existing.user.reload();
                 if(!existing.user.emailVerified){
-                  await deleteUser(existing.user);
-                  cred=await createUserWithEmailAndPassword(fbAuth,f.email,f.pw);
+                  // Vahvistamaton tili — ohjaa vahvistusprosessiin (ei poisteta tiliä)
+                  await signOut(fbAuth);
+                  _suppressAuthChange=false;
+                  setVerifyPending({email:f.email,pw:f.pw});
+                  setLoading(false);return;
                 }else{
                   await signOut(fbAuth);
-                  setError("Tällä sähköpostiosoitteella on jo käyttäjätili. Kirjaudu sisään tai palauta salasana.");
+                  setError("Tällä sähköpostiosoitteella on jo vahvistettu käyttäjätili. Kirjaudu sisään.");
                   setLoading(false);return;
                 }
               }catch(e2){
                 if(e2.code==="auth/wrong-password"||e2.code==="auth/invalid-credential"){
-                  setError("Tällä sähköpostiosoitteella on jo käyttäjätili. Kirjaudu sisään tai palauta salasana.");
+                  setError("Tällä sähköpostiosoitteella on jo tili. Kirjaudu sisään tai palauta salasana.");
                 }else{
                   setError(ERRS[e2.code]||"Virhe. Yritä uudelleen.");
                 }
@@ -2729,24 +2741,39 @@ function Auth({onSkip}) {
     setLoading(false);
   };
 
+  // Hae tai kirjaudu käyttäjäksi vahvistustoimintoja varten
+  // Jos fbAuth.currentUser on olemassa (sovelluksen uudelleenavauksessa), käytetään sitä suoraan
+  // Jos verifyPending.pw on tallennettu (tuore rekisteröinti/kirjautuminen), käytetään sitä
+  const getVerifyUser=async()=>{
+    const current=fbAuth.currentUser;
+    if(current&&current.email===verifyPending.email){
+      await current.reload();
+      return{user:current,signedInNow:false};
+    }
+    if(!verifyPending.pw)throw new Error("no_pw");
+    const cred=await signInWithEmailAndPassword(fbAuth,verifyPending.email,verifyPending.pw);
+    await cred.user.reload();
+    return{user:cred.user,signedInNow:true};
+  };
+
   const resendVerification=async()=>{
     if(resendCooldown>0)return;
     setLoading(true);setResendOk(false);setError("");
     try{
-      const cred=await signInWithEmailAndPassword(fbAuth,verifyPending.email,verifyPending.pw);
-      await cred.user.reload();
-      if(cred.user.emailVerified){
-        // Käyttäjä on jo vahvistanut — päästetään suoraan sisään
+      const{user,signedInNow}=await getVerifyUser();
+      if(user.emailVerified){
+        // Käyttäjä on jo vahvistanut — päästetään sisään
+        if(onUnverifiedCleared)onUnverifiedCleared();
         setVerifyPending(null);
         setLoading(false);return;
       }
       try{
-        await sendEmailVerification(cred.user);
-        await signOut(fbAuth);
+        await sendEmailVerification(user);
+        if(signedInNow)await signOut(fbAuth);
         setResendOk(true);
         startResendCooldown();
       }catch(e2){
-        await signOut(fbAuth);
+        if(signedInNow)await signOut(fbAuth);
         if(e2.code==="auth/too-many-requests"){
           setError("Liian monta yritystä. Odota hetki ennen uudelleenlähetystä.");
           startResendCooldown();
@@ -2755,8 +2782,12 @@ function Auth({onSkip}) {
         }
       }
     }catch(e){
-      if(e.code==="auth/invalid-credential"||e.code==="auth/wrong-password"){
+      if(e.message==="no_pw"){
+        setError("Kirjaudu sisään ensin, jotta voimme lähettää uuden vahvistusviestin.");
+        setVerifyPending(null);setMode("login");
+      }else if(e.code==="auth/invalid-credential"||e.code==="auth/wrong-password"){
         setError("Väärä salasana. Yritä kirjautua sisään uudelleen.");
+        setVerifyPending(null);setMode("login");
       }else if(e.code==="auth/too-many-requests"){
         setError("Liian monta yritystä. Odota hetki.");
         startResendCooldown();
@@ -2770,16 +2801,24 @@ function Auth({onSkip}) {
   const checkVerification=async()=>{
     setLoading(true);setError("");
     try{
-      const cred=await signInWithEmailAndPassword(fbAuth,verifyPending.email,verifyPending.pw);
-      await cred.user.reload();
-      if(cred.user.emailVerified){
+      const{user,signedInNow}=await getVerifyUser();
+      if(user.emailVerified){
         // Vahvistus onnistui — onAuthStateChanged hoitaa siirtymän sovellukseen
+        if(onUnverifiedCleared)onUnverifiedCleared();
         setVerifyPending(null);
       }else{
-        await signOut(fbAuth);
+        if(signedInNow)await signOut(fbAuth);
         setError("Sähköpostiosoitetta ei ole vielä vahvistettu. Klikkaa sähköpostissa olevaa vahvistuslinkkiä.");
       }
-    }catch(e){setError("Virhe. Tarkista sähköposti ja salasana.");}
+    }catch(e){
+      if(e.message==="no_pw"){
+        // Ei salasanaa eikä aktiivista sessiota — pyydä kirjautumaan
+        setError("Kirjaudu sisään tarkistaaksesi vahvistuksen.");
+        setVerifyPending(null);setMode("login");
+      }else{
+        setError("Virhe. Tarkista sähköposti ja salasana.");
+      }
+    }
     setLoading(false);
   };
 
@@ -2818,22 +2857,30 @@ function Auth({onSkip}) {
         </div>
         <div style={{background:"#FFFBEA",borderRadius:12,padding:"10px 14px",marginBottom:16,border:"1px solid #F0D060"}}>
           <p style={{fontSize:12,color:"#7A6000",margin:0,lineHeight:1.5}}>
-            💡 Jos et löydä viestiä saapuneista, tarkista myös <strong>roskapostikansio</strong>.
+            💡 Jos et löydä viestiä, tarkista <strong>roskapostikansio</strong> sekä Tarjoukset/Muut-kansiot.
           </p>
         </div>
-        {resendOk&&<div style={{...card(S.gs,S.grn),padding:10,marginBottom:12,textAlign:"center"}}>
+        {resendOk&&<div style={{background:"#F0FAF0",borderRadius:10,padding:"8px 12px",marginBottom:12,textAlign:"center",border:"1px solid "+S.grn}}>
           <span style={{fontSize:12,color:S.grn,fontWeight:600}}>✓ Vahvistusviesti lähetetty uudelleen!</span>
         </div>}
         {error&&<p style={{fontSize:12,color:S.rose,marginBottom:8,textAlign:"center"}}>{error}</p>}
-        <button onClick={resendVerification} disabled={resendCooldown>0||loading}
-          style={{...btn(resendCooldown>0?S.brd:S.ink,resendCooldown>0?S.mut:S.wh),width:"100%",padding:"12px 0",marginBottom:12}}>
-          {loading?"⏳ Lähetetään…":resendCooldown>0?`Lähetä uudelleen (${resendCooldown}s)`:"Lähetä vahvistusviesti uudelleen"}
-        </button>
         <button onClick={checkVerification} disabled={loading}
-          style={{...btn(S.rose,S.wh),width:"100%",padding:"12px 0",marginBottom:12}}>
+          style={{...btn(S.rose,S.wh),width:"100%",padding:"12px 0",marginBottom:10}}>
           {loading?"⏳ Tarkistetaan…":"✓ Olen vahvistanut sähköpostini"}
         </button>
-        <button onClick={()=>{setVerifyPending(null);setMode("login");setError("");}}
+        <button onClick={resendVerification} disabled={resendCooldown>0||loading}
+          style={{...btn(resendCooldown>0?S.brd:S.ink,resendCooldown>0?S.mut:S.wh),width:"100%",padding:"12px 0",marginBottom:10}}>
+          {loading?"⏳ Lähetetään…":resendCooldown>0?`Lähetä uudelleen (${resendCooldown}s)`:"Lähetä vahvistusviesti uudelleen"}
+        </button>
+        <button onClick={async()=>{
+          if(!verifyPending?.email){setVerifyPending(null);setMode("login");return;}
+          try{await sendPasswordResetEmail(fbAuth,verifyPending.email);setError("");setResendOk(false);
+            alert("Salasanan palautuslinkki lähetetty: "+verifyPending.email);}
+          catch{setError("Virhe salasanan palautuksessa. Yritä uudelleen.");}
+        }} style={{background:"none",border:"none",color:S.mut,fontSize:12,textDecoration:"underline",cursor:"pointer",fontFamily:FF,display:"block",width:"100%",textAlign:"center",marginBottom:8}}>
+          Unohditko salasanasi?
+        </button>
+        <button onClick={()=>{if(onUnverifiedCleared)onUnverifiedCleared();setVerifyPending(null);setMode("login");setError("");}}
           style={{background:"none",border:"none",color:S.mut,fontSize:12.5,textDecoration:"underline",cursor:"pointer",fontFamily:FF,textAlign:"center"}}>
           ← Takaisin kirjautumiseen
         </button>
@@ -2967,6 +3014,7 @@ function ProfileSetupPopup({onSave,onSkip}) {
 /* ── MAIN APP ── */
 function App() {
   const[fbUser,setFbUser]=useState(undefined);
+  const[unverifiedUser,setUnverifiedUser]=useState(null); // kirjautunut mutta sähköposti vahvistamatta
   const[skipped,setSkipped]=useState(false);
   const[userName,setUserName]=useState("");
   const[showWelcome,setShowWelcome]=useState(false);
@@ -2993,12 +3041,17 @@ function App() {
     const unsub=onAuthStateChanged(fbAuth,async user=>{
       // Blokeeraa rekisteröintivirran aikana — estää kaikki profiilivilahdukset
       if(_suppressAuthChange)return;
-      // Vahvistamaton käyttäjä ei saa avata sovellusta
-      // Reload pakottaa tuoreen emailVerified-arvon Firebasesta (cache voi olla vanhentunut)
+      // Vahvistamaton käyttäjä: pidä kirjautuneena Firebaseen mutta estä sovellukseen pääsy
+      // Reload pakottaa tuoreen emailVerified-arvon (cache voi olla vanhentunut)
       if(user&&!user.emailVerified){
         try{await user.reload();}catch{}
-        if(!user.emailVerified){setFbUser(null);return;}
+        if(!user.emailVerified){
+          setUnverifiedUser(user); // näytetään vahvistusnäkymä Auth-komponentissa
+          setFbUser(null);
+          return;
+        }
       }
+      setUnverifiedUser(null);
       setFbUser(user);
       if(user){
         try{
@@ -3249,7 +3302,7 @@ function App() {
   const NAV=[["koti","🏠","Koti"],["haku","🔍","Haku"],["ostoslista","📋","Ostoslista"],["ai","✨","AI"],["plus","👑","PLUS+"],["profiili","👤","Profiili"]];
 
   if(fbUser===undefined)return<div style={{maxWidth:480,margin:"0 auto",minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:S.bg}}><Spinner label="Ladataan…"/></div>;
-  if(!fbUser)return<Auth onSkip={()=>{}}/>;
+  if(!fbUser)return<Auth onSkip={()=>{}} unverifiedUser={unverifiedUser} onUnverifiedCleared={()=>setUnverifiedUser(null)}/>;
 
   const auth={loggedIn:!!fbUser,name:userName||fbUser?.displayName||fbUser?.email?.split("@")[0]||"",email:fbUser?.email||"",memberSince:fbUser?.metadata?.creationTime||null,emailVerified:fbUser?.emailVerified||false};
 
