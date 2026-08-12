@@ -245,6 +245,18 @@ const BRANDS = {
   korut:       ["Pilgrim","Edblad","Pernille Corydon","Maria Black","Pandora","Thomas Sabo","Swarovski","Julie Sandlau","Emma & Roe","Vibe Harsløf","Maanesten"],
 };
 
+// Kaikki brändit yhdistettynä autocomplete-ehdotuksia varten
+const ALL_BRANDS=[...new Set(Object.values(BRANDS).flat())].sort();
+
+// Suodattaa autocomplete-ehdotukset kirjoitetun tekstin perusteella (brändit + historia)
+function getAutoSugg(q,history){
+  if(!q||q.length<2)return[];
+  const lq=q.toLowerCase();
+  const brandMatches=ALL_BRANDS.filter(b=>b.toLowerCase().startsWith(lq)).slice(0,4);
+  const histMatches=(history||[]).filter(h=>h.toLowerCase().includes(lq)&&!brandMatches.includes(h)).slice(0,3);
+  return[...brandMatches,...histMatches].slice(0,6);
+}
+
 /* ── Kategoriakohtainen tulosvalidointi — käytetään yhteisessä hakumoottorissa ── */
 const CAT_VALIDATE = {
   hiukset:    /shampoo|hoitoaine|hiusnaamio|hiusöljy|hiusseerumi|hiusvaha|hiuslakka|muotovaahto|hiusvesi|hiuskuorinta|hiusväri|sävyteshampoo|kiharrin|suoristusrauta|hiustenkuivaaja|conditioner|hair\s?mask|hair\s?oil|scalp\s?care|curl|hiustuote|hius|palsami|balsami|hair\s?cream|blow\s?dry|argan/i,
@@ -1223,6 +1235,13 @@ function ScreenHaku({isPlus,freeLeft,useFree,favs,toggleFav,addList,goPlus,recom
   const[compareLoading,setCompareLoading]=useState(false);
   const[history,setHistory]=useState([]);
   const[brand,setBrand]=useState(null);
+  // Autocomplete
+  const[autoSugg,setAutoSugg]=useState([]);
+  const[showAuto,setShowAuto]=useState(false);
+  // Suodattimet
+  const[fMin,setFMin]=useState("");
+  const[fMax,setFMax]=useState("");
+  const[fStores,setFStores]=useState([]);
 
   useEffect(()=>{
     if(recommItem){
@@ -1301,7 +1320,9 @@ function ScreenHaku({isPlus,freeLeft,useFree,favs,toggleFav,addList,goPlus,recom
     setCompareData(d);setCompareLoading(false);
   };
 
-  const reset=()=>{setSuggestions(null);setSelected(null);setCompareData(null);setShowConfirm(false);setQ("");setBrand(null);clearCat();};
+  const reset=()=>{setSuggestions(null);setSelected(null);setCompareData(null);setShowConfirm(false);setQ("");setBrand(null);clearCat();setFMin("");setFMax("");setFStores([]);setAutoSugg([]);setShowAuto(false);};
+  const onQChange=v=>{setQ(v);const s=getAutoSugg(v,history);setAutoSugg(s);setShowAuto(s.length>0&&v.length>=2);};
+  const pickAutoSugg=s=>{setQ(s);setAutoSugg([]);setShowAuto(false);const full=[brand,s,catSearchTerm].filter(Boolean).join(" ");setTimeout(()=>doSearch(full||s,{catMain,catSub,brand}),0);};
 
   const visibleGroups=currentCat
     ?(showAllGroups?currentCat.groups:currentCat.groups.slice(0,2))
@@ -1312,15 +1333,29 @@ function ScreenHaku({isPlus,freeLeft,useFree,favs,toggleFav,addList,goPlus,recom
       <h2 style={{fontSize:21,fontWeight:700,color:S.ink,marginBottom:12}}>🔍 Hae tuote</h2>
 
       {!compareData&&<>
-        {/* Hakukenttä */}
-        <div style={{display:"flex",gap:8,marginBottom:12}}>
-          <input value={q} onChange={e=>setQ(e.target.value)}
-            onKeyDown={e=>e.key==="Enter"&&onSearch()}
-            placeholder={currentCat?`${currentCat.i} ${currentCat.l} – tarkenna hakua...`:"Kirjoita tuote tai valitse kategoria"}
-            style={inp}/>
-          <button onClick={onSearch} disabled={loading} style={btn(loading?S.brd:S.rose)}>
-            {loading?"⏳":"Hae"}
-          </button>
+        {/* Hakukenttä + autocomplete */}
+        <div style={{position:"relative",marginBottom:12}}>
+          <div style={{display:"flex",gap:8}}>
+            <input value={q} onChange={e=>onQChange(e.target.value)}
+              onKeyDown={e=>{if(e.key==="Enter"){setShowAuto(false);onSearch();}if(e.key==="Escape")setShowAuto(false);}}
+              onFocus={()=>{if(autoSugg.length>0)setShowAuto(true);}}
+              onBlur={()=>setTimeout(()=>setShowAuto(false),150)}
+              placeholder={currentCat?`${currentCat.i} ${currentCat.l} – tarkenna hakua...`:"Kirjoita tuote tai valitse kategoria"}
+              style={inp}/>
+            <button onClick={()=>{setShowAuto(false);onSearch();}} disabled={loading} style={btn(loading?S.brd:S.rose)}>
+              {loading?"⏳":"Hae"}
+            </button>
+          </div>
+          {showAuto&&autoSugg.length>0&&(
+            <div style={{position:"absolute",top:"100%",left:0,right:56,zIndex:100,background:S.wh,border:"1.5px solid "+S.brd,borderRadius:12,marginTop:4,boxShadow:"0 4px 16px rgba(0,0,0,0.10)",overflow:"hidden"}}>
+              {autoSugg.map((s,i)=>(
+                <button key={i} onMouseDown={()=>pickAutoSugg(s)}
+                  style={{display:"block",width:"100%",textAlign:"left",padding:"10px 14px",fontSize:13,color:S.ink,background:"none",border:"none",borderBottom:i<autoSugg.length-1?"1px solid "+S.brd:"none",cursor:"pointer",fontFamily:FF}}>
+                  🔍 {s}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Pääkategoriat — vaakasuuntainen scroll */}
@@ -1441,9 +1476,19 @@ function ScreenHaku({isPlus,freeLeft,useFree,favs,toggleFav,addList,goPlus,recom
         }
         // Data tulee jo suodatettuna searchProducts-funktiosta; suojasuodatus isFinnish
         const sugg=suggestions.results.filter(r=>isFinnish(r));
+        // Kaupat suodatusta varten
+        const availableStores=[...new Set(sugg.map(r=>r.store).filter(Boolean))].sort();
+        // Sovella suodattimet
+        const filtered=sugg.filter(r=>{
+          if(fMin&&r.price!=null&&r.price<parseFloat(fMin))return false;
+          if(fMax&&r.price!=null&&r.price>parseFloat(fMax))return false;
+          if(fStores.length>0&&!fStores.includes(r.store))return false;
+          return true;
+        });
+        const hasFilters=fMin||fMax||fStores.length>0;
         return sugg.length>0?(
           <div style={{marginTop:8}}>
-            {/* Suodatinpalkki — näytetään kun kategoria+sub aktiivisena */}
+            {/* Kategoria-aktiivinen palkki */}
             {catMain&&catSub&&(
               <div style={{...card(S.rs,S.brd),padding:"7px 12px",marginBottom:8,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
                 <span style={{fontSize:11.5,color:S.rd,fontWeight:600}}>
@@ -1466,8 +1511,45 @@ function ScreenHaku({isPlus,freeLeft,useFree,favs,toggleFav,addList,goPlus,recom
                 </button>
               </div>
             )}
-            <p style={{fontSize:12,color:S.mut,marginBottom:10,fontFamily:FF}}>Valitse tuote, jonka hinnat haluat vertailla:</p>
-            {[...sugg].sort((a,b)=>{
+            {/* ── Suodattimet ── */}
+            <div style={{...card(S.bg,S.brd),padding:"10px 12px",marginBottom:10}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                <span style={{fontSize:11.5,fontWeight:700,color:S.ink}}>🎛 Rajaa tuloksia</span>
+                {hasFilters&&<button onClick={()=>{setFMin("");setFMax("");setFStores([]);}} style={{fontSize:11,color:S.rose,background:"none",border:"none",cursor:"pointer",fontFamily:FF,fontWeight:600}}>Tyhjennä ✕</button>}
+              </div>
+              {/* Hintaväli */}
+              <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:8}}>
+                <span style={{fontSize:11.5,color:S.mut,flexShrink:0}}>Hinta:</span>
+                <input type="number" value={fMin} onChange={e=>setFMin(e.target.value)} placeholder="Min €"
+                  style={{...inp,fontSize:12,padding:"6px 10px",width:70,minWidth:0}}/>
+                <span style={{fontSize:12,color:S.mut}}>–</span>
+                <input type="number" value={fMax} onChange={e=>setFMax(e.target.value)} placeholder="Max €"
+                  style={{...inp,fontSize:12,padding:"6px 10px",width:70,minWidth:0}}/>
+              </div>
+              {/* Kaupat */}
+              {availableStores.length>1&&(
+                <div>
+                  <div style={{fontSize:11,color:S.mut,marginBottom:5,fontWeight:600}}>Kauppa:</div>
+                  <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                    {availableStores.map(st=>{
+                      const on=fStores.includes(st);
+                      return(
+                        <button key={st} onClick={()=>setFStores(on?fStores.filter(s=>s!==st):[...fStores,st])}
+                          style={{padding:"4px 10px",borderRadius:12,fontSize:11.5,fontWeight:500,cursor:"pointer",fontFamily:FF,
+                            border:"1px solid "+(on?S.rose:S.brd),background:on?S.rose:S.wh,color:on?S.wh:S.ink}}>
+                          {st}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+            <p style={{fontSize:12,color:S.mut,marginBottom:10,fontFamily:FF}}>
+              Valitse tuote, jonka hinnat haluat vertailla:
+              {hasFilters&&<span style={{color:S.rose}}> ({filtered.length}/{sugg.length})</span>}
+            </p>
+            {(hasFilters?filtered:sugg).sort((a,b)=>{
               if(a.price!=null&&b.price!=null)return a.price-b.price;
               if(a.price!=null)return -1;
               if(b.price!=null)return 1;
@@ -1482,6 +1564,7 @@ function ScreenHaku({isPlus,freeLeft,useFree,favs,toggleFav,addList,goPlus,recom
                 <div style={{fontSize:11.5,color:S.rose,fontWeight:600,flexShrink:0,fontFamily:FF}}>Valitse →</div>
               </button>
             ))}
+            {hasFilters&&filtered.length===0&&<p style={{color:S.mut,fontSize:13,marginTop:8,fontFamily:FF}}>Ei tuloksia valituilla suodattimilla. Kokeile laajentaa hintaväliä tai poista kaupparajaus.</p>}
           </div>
         ):<p style={{color:S.mut,fontSize:13,marginTop:12,fontFamily:FF}}>Ei tuloksia suomalaisista verkkokaupoista. Kokeile toista hakusanaa tai eri kategoriaa.</p>;
       })()}
