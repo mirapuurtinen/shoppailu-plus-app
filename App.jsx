@@ -529,7 +529,7 @@ function ResultCard({item,rank,toggleFav,addList,isFav,isPlus,goPlus,maxPrice}) 
         const r=await fetch(`${API}/api/link?${new URLSearchParams({q:item.title,domain:sd})}`);
         const d=await r.json();
         if(d.ok&&d.url){
-          if(isStandalone){navigate(d.url);}  // iOS: navigoi heti (window.location.href sallittu await:n jälkeen)
+          if(IS_STANDALONE){navigate(d.url);}  // iOS: navigoi heti (window.location.href sallittu await:n jälkeen)
           else{setResolvedUrl(d.url);}         // muu: näytä naputettava linkki
           setLinkLoading(false);return;
         }
@@ -538,7 +538,7 @@ function ResultCard({item,rank,toggleFav,addList,isFav,isPlus,goPlus,maxPrice}) 
     }
     // Varasuunnitelma: käytä suoraa linkkiä
     if(directUrl){
-      if(isStandalone){navigate(directUrl);}
+      if(IS_STANDALONE){navigate(directUrl);}
       else{setResolvedUrl(directUrl);}
       return;
     }
@@ -1885,7 +1885,7 @@ function ScreenOstoslista({list,setList,markBought,toggleFav,isPlus,goPlus,go}) 
   const total=list.reduce((s,it)=>s+(it.price||0),0);
   const remove=i=>setList(list.filter((_,j)=>j!==i));
   const optimize=async()=>{setOptimizing(true);const u=[...list];
-    for(let i=0;i<u.length;i++){const r=await liveSearch(u[i].title);if(r.ok&&r.results.length){const fi=r.results.filter(isFinnish);if(!fi.length)continue;const c=fi.reduce((a,b)=>((b.price||999)<(a.price||999)?b:a));if((c.price||999)<(u[i].price||999))u[i]={...u[i],...c,previousPrice:u[i].price};}}
+    for(let i=0;i<u.length;i++){const r=await searchProducts(u[i].title);if(r.ok&&r.results.length){const c=r.results.reduce((a,b)=>((b._total||b.price||999)<(a._total||a.price||999)?b:a));if((c._total||c.price||999)<(u[i].price||999))u[i]={...u[i],...c,previousPrice:u[i].price};}}
     setList(u);setOptimizing(false);};
   return(
     <div>
