@@ -2684,7 +2684,8 @@ function Auth({onSkip,unverifiedUser,onUnverifiedCleared}) {
     setLoading(true);setError("");setResetSent(false);
     try{
       if(mode==="register"){
-        await setPersistence(fbAuth,browserSessionPersistence);
+        // localStorage jotta vahvistamaton tili säilyy sovelluksen sulkemisen jälkeen
+        await setPersistence(fbAuth,browserLocalPersistence);
         _suppressAuthChange=true; // Blokeeraa kaikki auth-muutokset rekisteröintivirran ajaksi
         try{
           let cred;
@@ -2721,7 +2722,8 @@ function Auth({onSkip,unverifiedUser,onUnverifiedCleared}) {
           }
           await fbUpdateProfile(cred.user,{displayName:f.name.trim()});
           await sendEmailVerification(cred.user);
-          await signOut(fbAuth);
+          // Ei signOut — käyttäjä pidetään kirjautuneena Firebaseen (mutta blokattuna sovelluksesta)
+          // Näin reload näyttää vahvistusnäkymän automaattisesti onAuthStateChanged kautta
           setVerifyPending({email:f.email,pw:f.pw});
         }finally{
           _suppressAuthChange=false; // Vapautetaan aina — myös virhetilanteessa
@@ -2732,7 +2734,7 @@ function Auth({onSkip,unverifiedUser,onUnverifiedCleared}) {
         // Reload pakottaa tuoreen emailVerified-arvon — vanhentunut cache voi näyttää false vaikka on vahvistettu
         await cred.user.reload();
         if(!cred.user.emailVerified){
-          await signOut(fbAuth);
+          // Ei signOut — pidetään kirjautuneena jotta reload tunnistaa vahvistamattoman käyttäjän
           setVerifyPending({email:f.email,pw:f.pw,blocked:true});
         }
         // Jos emailVerified=true, onAuthStateChanged hoitaa loppuosan
