@@ -1534,6 +1534,7 @@ function ScreenSkannaa({isPlus,freeLeft,useFree,favs,toggleFav,addList,goPlus}) 
   const[statusMsg,setStatusMsg]=useState("");
   const videoRef=useRef(null);
   const streamRef=useRef(null);
+  const zxingRef=useRef(null);
 
   const guessName=u=>{
     try{
@@ -1582,40 +1583,45 @@ function ScreenSkannaa({isPlus,freeLeft,useFree,favs,toggleFav,addList,goPlus}) 
   };
 
   const stopCamera=()=>{
+    if(zxingRef.current){try{zxingRef.current.reset();}catch{}zxingRef.current=null;}
     if(streamRef.current){streamRef.current.getTracks().forEach(t=>t.stop());streamRef.current=null;}
     setScanning(false);
   };
 
   const startCamera=async()=>{
-    if(!("BarcodeDetector" in window)){
-      alert("Kameraskannaus ei ole tuettu tässä selaimessa. Kopioi EAN-koodi alla olevaan kenttään.");return;
-    }
     try{
-      const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});
-      streamRef.current=stream;
+      // Lataa ZXing dynaamisesti — toimii iOS Safarissa toisin kuin BarcodeDetector
+      const{BrowserMultiFormatReader,NotFoundException}=await import("@zxing/browser");
+      const reader=new BrowserMultiFormatReader();
+      zxingRef.current=reader;
       setScanning(true);
-      setTimeout(()=>{
-        if(videoRef.current){videoRef.current.srcObject=stream;videoRef.current.play();}
-        const detector=new window.BarcodeDetector({formats:["ean_13","ean_8","upc_a","upc_e"]});
-        const scan=async()=>{
-          if(!videoRef.current||!streamRef.current)return;
-          try{
-            const codes=await detector.detect(videoRef.current);
-            if(codes.length>0){
-              const ean=codes[0].rawValue;
-              stopCamera();
-              setUrl(ean);
-              setEanFound(ean);
-              if(!isPlus&&freeLeft<=0)return;
-              await searchByEan(ean);
-              return;
-            }
-          }catch{}
-          if(streamRef.current)requestAnimationFrame(scan);
-        };
-        videoRef.current.onloadedmetadata=()=>requestAnimationFrame(scan);
-      },100);
-    }catch{alert("Kameran käyttöoikeus evätty.");}
+      // Pyydä kameran käyttöoikeus takaosa-kameralle
+      const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"}}});
+      streamRef.current=stream;
+      if(videoRef.current){
+        videoRef.current.srcObject=stream;
+        await videoRef.current.play();
+      }
+      // Skannaa jatkuvasti videovirrasta
+      reader.decodeFromStream(stream,videoRef.current,(result,err)=>{
+        if(result){
+          const ean=result.getText();
+          stopCamera();
+          setUrl(ean);
+          setEanFound(ean);
+          if(!isPlus&&freeLeft<=0)return;
+          searchByEan(ean);
+        }
+        // NotFoundException on normaali kun koodia ei näy — ei virhe
+      });
+    }catch(e){
+      stopCamera();
+      if(e.name==="NotAllowedError"||e.name==="PermissionDeniedError"){
+        alert("Kameran käyttöoikeus evätty. Salli kameran käyttö selaimen asetuksista.");
+      }else{
+        alert("Kameran avaaminen epäonnistui: "+(e.message||e));
+      }
+    }
   };
 
   useEffect(()=>()=>stopCamera(),[]);
