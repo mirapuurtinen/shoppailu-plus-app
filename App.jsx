@@ -1470,39 +1470,130 @@ function ScreenHaku({isPlus,freeLeft,useFree,favs,toggleFav,addList,goPlus,recom
 
 /* SKANNAA */
 function ScreenSkannaa({isPlus,freeLeft,useFree,favs,toggleFav,addList,goPlus}) {
-  const[url,setUrl]=useState("");const[loading,setLoading]=useState(false);const[data,setData]=useState(null);
+  const[url,setUrl]=useState("");
+  const[loading,setLoading]=useState(false);
+  const[data,setData]=useState(null);
+  const[eanFound,setEanFound]=useState(null);
+  const[scanning,setScanning]=useState(false);
+  const[statusMsg,setStatusMsg]=useState("");
+  const videoRef=useRef(null);
+  const streamRef=useRef(null);
+
   const guessName=u=>{
     try{
       const parsed=new URL(u);
       const segments=parsed.pathname.split("/").filter(Boolean);
-      // Suodata pois kielikoodit, kategoriat, lyhyet segmentit ja pelkät numerot
       const SKIP=/^(fi|sv|en|p|c|d|s|cat|category|products?|shop|store|tuotteet?|verkkokauppa|[a-z]{1,2}|\d+)$/i;
-      // Ota segmentit joissa on väliviiva ja jotka ovat tarpeeksi pitkiä — yleensä tuotenimi-slug
       const parts=segments.filter(s=>s.length>5&&!SKIP.test(s)&&s.includes('-'));
-      // Lajittele pituuden mukaan laskevasti — pisin on yleensä tuotteen nimi
       parts.sort((a,b)=>b.length-a.length);
       const slug=(parts[0]||segments[segments.length-1]||"");
       return slug.replace(/[-_]/g," ").replace(/\.\w{2,4}$/,"").trim().slice(0,150);
     }catch{return u.slice(0,100);}
   };
+
+  const searchByEan=async(ean)=>{
+    setLoading(true);setData(null);
+    setStatusMsg("Haetaan EAN-koodilla "+ean+"…");
+    const d=await searchProducts(ean,{titleThreshold:0});
+    setData(d);setLoading(false);setStatusMsg("");
+    if(d.ok)useFree();
+  };
+
   const run=async()=>{
     if(!url.trim()||(!isPlus&&freeLeft<=0))return;
-    setLoading(true);setData(null);
+    setLoading(true);setData(null);setEanFound(null);
+    // Yritä poimia EAN tuotesivulta ensin
+    if(url.startsWith("http")){
+      setStatusMsg("Haetaan EAN-koodi tuotesivulta…");
+      try{
+        const r=await fetch(`${API}/api/ean?${new URLSearchParams({url})}`);
+        const j=await r.json();
+        if(j.ok&&j.ean){
+          setEanFound(j.ean);
+          setStatusMsg("EAN löytyi: "+j.ean+" — haetaan kaikista kaupoista…");
+          const d=await searchProducts(j.ean,{titleThreshold:0});
+          setData(d);setLoading(false);setStatusMsg("");
+          if(d.ok)useFree();return;
+        }
+      }catch{}
+    }
+    // Fallback: nimimatching URL-slugista
+    setStatusMsg("EAN ei löytynyt — haetaan tuotenimellä…");
     const productName=guessName(url);
-    const d=await searchProducts(productName, {titleThreshold:0.45});
-    setData(d);setLoading(false);if(d.ok)useFree();
+    const d=await searchProducts(productName,{titleThreshold:0.45});
+    setData(d);setLoading(false);setStatusMsg("");
+    if(d.ok)useFree();
   };
+
+  const stopCamera=()=>{
+    if(streamRef.current){streamRef.current.getTracks().forEach(t=>t.stop());streamRef.current=null;}
+    setScanning(false);
+  };
+
+  const startCamera=async()=>{
+    if(!("BarcodeDetector" in window)){
+      alert("Kameraskannaus ei ole tuettu tässä selaimessa. Kopioi EAN-koodi alla olevaan kenttään.");return;
+    }
+    try{
+      const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});
+      streamRef.current=stream;
+      setScanning(true);
+      setTimeout(()=>{
+        if(videoRef.current){videoRef.current.srcObject=stream;videoRef.current.play();}
+        const detector=new window.BarcodeDetector({formats:["ean_13","ean_8","upc_a","upc_e"]});
+        const scan=async()=>{
+          if(!videoRef.current||!streamRef.current)return;
+          try{
+            const codes=await detector.detect(videoRef.current);
+            if(codes.length>0){
+              const ean=codes[0].rawValue;
+              stopCamera();
+              setUrl(ean);
+              setEanFound(ean);
+              if(!isPlus&&freeLeft<=0)return;
+              await searchByEan(ean);
+              return;
+            }
+          }catch{}
+          if(streamRef.current)requestAnimationFrame(scan);
+        };
+        videoRef.current.onloadedmetadata=()=>requestAnimationFrame(scan);
+      },100);
+    }catch{alert("Kameran käyttöoikeus evätty.");}
+  };
+
+  useEffect(()=>()=>stopCamera(),[]);
+
   return(
     <div>
-      <h2 style={{fontSize:21,fontWeight:700,color:S.ink,marginBottom:12}}>📷 Skannaa</h2>
-      <p style={{fontSize:13,color:S.mut,marginBottom:12}}>Liitä tuotteen linkki — sovellus etsii täsmälleen saman tuotteen hinnat eri kaupoista.</p>
-      <div style={card()}>
-        <div style={{fontWeight:600,fontSize:13,color:S.ink,marginBottom:8}}>🔗 Tuotelinkki</div>
-        <div style={{display:"flex",gap:8}}>
-          <input value={url} onChange={e=>setUrl(e.target.value)} placeholder="https://..." style={{...inp,fontSize:12.5}}/>
-          <button onClick={run} disabled={loading||(!isPlus&&freeLeft<=0)} style={btn((!isPlus&&freeLeft<=0)?S.brd:S.ink)}>{loading?"⏳":"Hae"}</button>
+      <h2 style={{fontSize:21,fontWeight:700,color:S.ink,marginBottom:4}}>📷 Skannaa</h2>
+      <p style={{fontSize:13,color:S.mut,marginBottom:12}}>Skannaa viivakoodi kameralla tai liitä tuotelinkki — sovellus etsii saman tuotteen hinnat kaikista kaupoista EAN-koodin avulla.</p>
+
+      {scanning&&(
+        <div style={{marginBottom:12,borderRadius:16,overflow:"hidden",background:"#000",position:"relative"}}>
+          <video ref={videoRef} style={{width:"100%",maxHeight:240,objectFit:"cover",display:"block"}} playsInline muted/>
+          <div style={{position:"absolute",inset:0,border:"3px solid "+S.rose,borderRadius:16,pointerEvents:"none"}}/>
+          <button onClick={stopCamera} style={{position:"absolute",top:8,right:8,background:"rgba(0,0,0,0.6)",border:"none",color:"#fff",borderRadius:8,padding:"6px 12px",fontSize:12,cursor:"pointer"}}>✕ Sulje</button>
+          <div style={{position:"absolute",bottom:8,left:0,right:0,textAlign:"center",color:"#fff",fontSize:12}}>Kohdista viivakoodi kameraan</div>
         </div>
+      )}
+
+      <div style={card()}>
+        <div style={{fontWeight:600,fontSize:13,color:S.ink,marginBottom:8}}>🔗 Tuotelinkki tai EAN-koodi</div>
+        <div style={{display:"flex",gap:8,marginBottom:8}}>
+          <input value={url} onChange={e=>{setUrl(e.target.value);setEanFound(null);}} placeholder="https://... tai 6408430012345" style={{...inp,fontSize:12.5}}/>
+          <button onClick={run} disabled={loading||!url.trim()||(!isPlus&&freeLeft<=0)} style={{...btn((!isPlus&&freeLeft<=0)||!url.trim()?S.brd:S.ink),whiteSpace:"nowrap"}}>{loading?"⏳":"Hae"}</button>
+        </div>
+        <button onClick={scanning?stopCamera:startCamera} style={{...btn(scanning?S.rose:S.ink),width:"100%",fontSize:13}}>
+          {scanning?"⏹ Pysäytä skannaus":"📷 Skannaa viivakoodi kameralla"}
+        </button>
       </div>
+
+      {eanFound&&<div style={{background:"#F0FAF0",border:"1px solid "+S.grn,borderRadius:10,padding:"8px 12px",marginTop:8,fontSize:12,color:S.grn}}>
+        ✓ EAN löytyi: <strong>{eanFound}</strong> — hakutulokset ovat tarkempia
+      </div>}
+      {statusMsg&&!data&&<div style={{fontSize:12,color:S.mut,marginTop:8,textAlign:"center"}}>{statusMsg}</div>}
+
       <Results data={data} loading={loading} isPlus={isPlus} goPlus={goPlus} favs={favs} toggleFav={toggleFav} addList={addList}/>
     </div>
   );
