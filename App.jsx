@@ -1590,30 +1590,31 @@ function ScreenSkannaa({isPlus,freeLeft,useFree,favs,toggleFav,addList,goPlus}) 
 
   const startCamera=async()=>{
     try{
-      // Lataa ZXing dynaamisesti — toimii iOS Safarissa toisin kuin BarcodeDetector
-      const{BrowserMultiFormatReader,NotFoundException}=await import("@zxing/browser");
+      const{BrowserMultiFormatReader}=await import("@zxing/browser");
       const reader=new BrowserMultiFormatReader();
       zxingRef.current=reader;
       setScanning(true);
-      // Pyydä kameran käyttöoikeus takaosa-kameralle
-      const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"}}});
-      streamRef.current=stream;
-      if(videoRef.current){
-        videoRef.current.srcObject=stream;
-        await videoRef.current.play();
-      }
-      // Skannaa jatkuvasti videovirrasta
-      reader.decodeFromStream(stream,videoRef.current,(result,err)=>{
-        if(result){
-          const ean=result.getText();
-          stopCamera();
-          setUrl(ean);
-          setEanFound(ean);
-          if(!isPlus&&freeLeft<=0)return;
-          searchByEan(ean);
+      // Odota React-renderointi jotta video-elementti on DOM:ssa
+      await new Promise(r=>setTimeout(r,150));
+      if(!videoRef.current){return;}
+      // decodeFromConstraints hoitaa kameran avauksen itse — toimii iOS Safarissa
+      reader.decodeFromConstraints(
+        {video:{facingMode:{ideal:"environment"}}},
+        videoRef.current,
+        (result,err)=>{
+          if(result){
+            const ean=result.getText();
+            // Tallenna stream stoppia varten
+            if(videoRef.current&&videoRef.current.srcObject)streamRef.current=videoRef.current.srcObject;
+            stopCamera();
+            setUrl(ean);
+            setEanFound(ean);
+            if(!isPlus&&freeLeft<=0)return;
+            searchByEan(ean);
+          }
+          // NotFoundException on normaali kun koodia ei näy — ei virhe
         }
-        // NotFoundException on normaali kun koodia ei näy — ei virhe
-      });
+      );
     }catch(e){
       stopCamera();
       if(e.name==="NotAllowedError"||e.name==="PermissionDeniedError"){
