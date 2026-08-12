@@ -1550,8 +1550,15 @@ function ScreenSkannaa({isPlus,freeLeft,useFree,favs,toggleFav,addList,goPlus}) 
 
   const searchByEan=async(ean)=>{
     setLoading(true);setData(null);
-    setStatusMsg("Haetaan EAN-koodilla "+ean+"…");
-    const d=await searchProducts(ean,{titleThreshold:0});
+    setStatusMsg("Haetaan tuotenimeä EAN-koodilla "+ean+"…");
+    // Hae tuotenimi Open Beauty/Food Facts -tietokannasta
+    let searchTerm=ean;
+    try{
+      const nr=await fetch(`${API}/api/ean?${new URLSearchParams({url:ean})}`);
+      const nj=await nr.json();
+      if(nj.productName){searchTerm=nj.productName;setStatusMsg("Löytyi: "+nj.productName+" — haetaan kaupoista…");}
+    }catch{}
+    const d=await searchProducts(searchTerm,{titleThreshold:0});
     setData(d);setLoading(false);setStatusMsg("");
     if(d.ok)useFree();
   };
@@ -1567,8 +1574,10 @@ function ScreenSkannaa({isPlus,freeLeft,useFree,favs,toggleFav,addList,goPlus}) 
         const j=await r.json();
         if(j.ok&&j.ean){
           setEanFound(j.ean);
-          setStatusMsg("EAN löytyi: "+j.ean+" — haetaan kaikista kaupoista…");
-          const d=await searchProducts(j.ean,{titleThreshold:0});
+          // Käytä tuotenimeä jos löytyi, muuten EAN-koodia
+          const searchTerm=j.productName||j.ean;
+          setStatusMsg(j.productName?"Löytyi: "+j.productName+" — haetaan kaupoista…":"EAN: "+j.ean+" — haetaan kaupoista…");
+          const d=await searchProducts(searchTerm,{titleThreshold:0});
           setData(d);setLoading(false);setStatusMsg("");
           if(d.ok)useFree();return;
         }
@@ -1883,14 +1892,65 @@ function AsuTool({back,isPlus,goPlus,favs,toggleFav,addList,profile}) {
 /* OSTOSLISTA */
 function ScreenOstoslista({list,setList,markBought,toggleFav,isPlus,goPlus,go}) {
   const[optimizing,setOptimizing]=useState(false);
+  const[alerts,setAlerts]=useState([]);
   const total=list.reduce((s,it)=>s+(it.price||0),0);
   const remove=i=>setList(list.filter((_,j)=>j!==i));
-  const optimize=async()=>{setOptimizing(true);const u=[...list];
-    for(let i=0;i<u.length;i++){const r=await searchProducts(u[i].title);if(r.ok&&r.results.length){const c=r.results.reduce((a,b)=>((b._total||b.price||999)<(a._total||a.price||999)?b:a));if((c._total||c.price||999)<(u[i].price||999))u[i]={...u[i],...c,previousPrice:u[i].price};}}
-    setList(u);setOptimizing(false);};
+  const toggleWatch=i=>setList(list.map((it,j)=>j===i?{...it,watched:!it.watched}:it));
+
+  const checkAlerts=async(items)=>{
+    const watched=items.filter(it=>it.watched&&it.price!=null);
+    if(!watched.length)return[];
+    const found=[];
+    for(const it of watched){
+      const r=await searchProducts(it.title);
+      if(!r.ok||!r.results.length)continue;
+      const best=r.results.reduce((a,b)=>((b._total||b.price||999)<(a._total||a.price||999)?b:a));
+      const np=best._total||best.price;
+      if(np!=null&&np<(it.price||999))found.push({title:it.title,oldPrice:it.price,newPrice:np,store:best.store});
+    }
+    return found;
+  };
+
+  const optimize=async()=>{
+    setOptimizing(true);
+    const u=[...list];
+    for(let i=0;i<u.length;i++){
+      const r=await searchProducts(u[i].title);
+      if(r.ok&&r.results.length){
+        const c=r.results.reduce((a,b)=>((b._total||b.price||999)<(a._total||a.price||999)?b:a));
+        if((c._total||c.price||999)<(u[i].price||999))u[i]={...u[i],...c,previousPrice:u[i].price};
+      }
+    }
+    setList(u);
+    const found=await checkAlerts(u);
+    if(found.length)setAlerts(found);
+    setOptimizing(false);
+  };
+
+  // Tarkista hintavahdit automaattisesti kun ostoslista avataan
+  useEffect(()=>{
+    if(list.some(it=>it.watched))checkAlerts(list).then(a=>{if(a.length)setAlerts(a);});
+  },[]);
+
   return(
     <div>
       <h2 style={{fontSize:21,fontWeight:700,color:S.ink,marginBottom:12}}>📋 Ostoslista</h2>
+
+      {/* Hintavahti-ilmoitukset */}
+      {alerts.length>0&&(
+        <div style={{background:"#F0FAF0",border:"1.5px solid "+S.grn,borderRadius:14,padding:"12px 14px",marginBottom:12}}>
+          <div style={{fontWeight:700,fontSize:13,color:S.grn,marginBottom:6}}>📉 Hintalasku havaittu!</div>
+          {alerts.map((a,i)=>(
+            <div key={i} style={{fontSize:12,color:S.ink,marginBottom:4}}>
+              <b>{a.title}</b> · <span style={{textDecoration:"line-through",color:S.mut}}>{eur(a.oldPrice)}</span> → <span style={{color:S.grn,fontWeight:700}}>{eur(a.newPrice)}</span>
+              {a.store&&<span style={{color:S.mut}}> · {a.store}</span>}
+              <span style={{color:S.grn,fontWeight:600}}> (−{eur(a.oldPrice-a.newPrice)})</span>
+            </div>
+          ))}
+          <button onClick={()=>setAlerts([])} style={{fontSize:11,color:S.mut,background:"none",border:"none",cursor:"pointer",marginTop:6,padding:0,fontFamily:FF}}>✕ Sulje ilmoitus</button>
+        </div>
+      )}
+
       {list.length===0&&(
         <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:12,width:"100%",marginTop:40,padding:"32px 24px",background:S.wh,border:"2px dashed "+S.brd,borderRadius:20}}>
           <span style={{fontSize:40}}>🛍️</span>
@@ -1913,6 +1973,7 @@ function ScreenOstoslista({list,setList,markBought,toggleFav,isPlus,goPlus,go}) 
                 <span style={{fontSize:17,fontWeight:700,fontFamily:"monospace",color:it.previousPrice>it.price?S.grn:S.ink}}>{eur(it.price)}</span>
                 {it.previousPrice>it.price&&<span style={{fontSize:11,color:S.grn,fontWeight:700}}>−{eur(it.previousPrice-it.price)}</span>}
               </div>
+              {it.watched&&<div style={{fontSize:10,color:S.grn,fontWeight:600,marginTop:2}}>👁 Hintavahti päällä</div>}
               {(()=>{const del=parseDelivery(it.delivery);
                 if(del.free) return <div style={{fontSize:10,color:S.grn,fontWeight:700,marginTop:2}}>Toimitus ilmainen</div>;
                 if(del.cost!=null&&it.price!=null) return <div style={{fontSize:10,color:S.mut,marginTop:2}}>+ toimitus {eur(del.cost)} · yht. <b>{eur(it.price+del.cost)}</b></div>;
@@ -1926,13 +1987,17 @@ function ScreenOstoslista({list,setList,markBought,toggleFav,isPlus,goPlus,go}) 
             ✅ Merkitse ostetuksi
           </button>
           {/* Toissijaiset toiminnot */}
-          <div style={{display:"grid",gridTemplateColumns:it.link?"1fr 1fr 1fr":"1fr 1fr",gap:6}}>
+          <div style={{display:"grid",gridTemplateColumns:it.link?"1fr 1fr 1fr 1fr":"1fr 1fr 1fr",gap:6}}>
             {it.link&&(
               <a href={it.link} target="_blank" rel="noreferrer"
                 style={{display:"flex",alignItems:"center",justifyContent:"center",gap:5,background:S.bg,border:"1.5px solid "+S.brd,borderRadius:10,padding:"9px 4px",fontSize:11.5,fontWeight:600,color:S.rd,textDecoration:"none",textAlign:"center"}}>
-                🔗 Tuotesivu
+                🔗 Sivu
               </a>
             )}
+            <button onClick={()=>toggleWatch(i)}
+              style={{display:"flex",alignItems:"center",justifyContent:"center",gap:4,background:it.watched?"#F0FAF0":S.bg,border:"1.5px solid "+(it.watched?S.grn:S.brd),borderRadius:10,padding:"9px 4px",fontSize:11.5,fontWeight:600,color:it.watched?S.grn:S.mut,cursor:"pointer",fontFamily:FF}}>
+              👁 {it.watched?"Seurataan":"Seuraa"}
+            </button>
             <button onClick={()=>{toggleFav(it);remove(i);}}
               style={{display:"flex",alignItems:"center",justifyContent:"center",gap:5,background:S.rs,border:"1.5px solid "+S.brd,borderRadius:10,padding:"9px 4px",fontSize:11.5,fontWeight:600,color:S.rd,cursor:"pointer",fontFamily:FF}}>
               ❤️ Suosikit
