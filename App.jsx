@@ -275,6 +275,11 @@ let _suppressAuthChange = false;
 
 // ── Muuta tähän ilmaisversion kuukausittainen hakuraja ──
 const FREE_MONTHLY_LIMIT = 10;
+// ── Plus-tilauksen kuukausihinta — muuta vain tästä ──
+const PLUS_PRICE = "4,99 €/kk";
+const PLUS_PRICE_SHORT = "4,99 €";
+// ── iOS standalone-tila (kotivalikko) — lasketaan kerran käynnistyksessä ──
+const IS_STANDALONE = !!window.navigator.standalone || window.matchMedia('(display-mode:standalone)').matches;
 
 /* ── Styles ── */
 const S = {
@@ -354,9 +359,11 @@ async function searchProducts(query, opts={}) {
   // 6. Käytettävä linkki
   results = results.filter(r => hasUsableLink(r));
 
-  // 7. Järjestys kokonaishinnan mukaan (tuote + toimitus)
-  const totalPrice = r => (r.price ?? 9999) + (parseDelivery(r.delivery).free ? 0 : (parseDelivery(r.delivery).cost ?? 0));
-  results = results.sort((a, b) => totalPrice(a) - totalPrice(b));
+  // 7. Järjestys kokonaishinnan mukaan (tuote + toimitus) — lasketaan kerran per tuote
+  results = results.map(r => {
+    const del = parseDelivery(r.delivery);
+    return {...r, _total: (r.price ?? 9999) + (del.free ? 0 : (del.cost ?? 0))};
+  }).sort((a, b) => a._total - b._total);
 
   return {...d, results};
 }
@@ -501,14 +508,9 @@ function ResultCard({item,rank,toggleFav,addList,isFav,isPlus,goPlus,maxPrice}) 
   const domain=domOf(item.link);
   const directUrl=cleanUrl(item.link);
 
-  // iOS kotivalikko (standalone) ei tue target="_blank" eikä window.open.
-  // Ainoa toimiva tapa: window.location.href, joka avautuu Safarissa.
-  // window.location.href ei vaadi aktiivista käyttäjägestuuria → toimii myös await:n jälkeen.
-  const isStandalone=!!window.navigator.standalone||window.matchMedia('(display-mode:standalone)').matches;
-
   const navigate=(url)=>{
     if(!url)return;
-    if(isStandalone){window.location.href=url;}  // iOS standalone → avautuu Safarissa
+    if(IS_STANDALONE){window.location.href=url;}  // iOS standalone → avautuu Safarissa
     else{window.open(url,'_blank','noopener,noreferrer');}  // muu → uusi välilehti
   };
 
@@ -1109,7 +1111,7 @@ function ScreenKoti({go,listN,favN,spent,budget,savings,potentialSavings,goPlus,
         {potentialSavings>0&&<div style={{fontSize:12,color:"#5A4A00",marginTop:5}}>Mahdollinen säästö ostoslistaltasi: <strong>{eur(potentialSavings)}</strong></div>}
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:10}}>
           <button onClick={()=>go("saastot")} style={{fontSize:11.5,color:"#7A6000",background:"none",border:"none",cursor:"pointer",padding:0,fontFamily:FF,fontWeight:600}}>Katso historia →</button>
-          <button className="plus-price-btn" onClick={goPlus}>4,99 €/kk</button>
+          <button className="plus-price-btn" onClick={goPlus}>{PLUS_PRICE}</button>
         </div>
       </div>
 
@@ -1178,13 +1180,14 @@ function ScreenHaku({isPlus,freeLeft,useFree,favs,toggleFav,addList,goPlus,recom
 
   const doSearch=async(fullQuery, searchOpts={})=>{
     const query=fullQuery.trim();if(!query)return;
+    // Tarkista off-topic ENSIN — ei kuluta ilmaishakuja aiheen ulkopuolisille hauille
+    if(isOffTopic(query)){
+      setSuggestions({ok:false,error:"Tämä tuote ei kuulu sovelluksen tuotekategorioihin. Sovellus on tarkoitettu kauneus-, muoti- ja hygieniatuotteille."});
+      return;
+    }
     if(!isPlus&&freeLeft<=0){
       setSuggestions({ok:false,error:"__LIMIT__"});
       return;
-    }
-    if(isOffTopic(query)){
-      setSuggestions({ok:false,error:"Tämä tuote ei kuulu sovelluksen tuotekategorioihin. Sovellus on tarkoitettu kauneus-, muoti- ja hygieniatuotteille."});
-      setLoading(false);return;
     }
     if(!history.includes(query))setHistory(prev=>[query,...prev.filter(x=>x!==query)].slice(0,8));
     setSuggestions(null);setSelected(null);setCompareData(null);setShowConfirm(false);
@@ -1238,7 +1241,8 @@ function ScreenHaku({isPlus,freeLeft,useFree,favs,toggleFav,addList,goPlus,recom
     if(!isPlus&&freeLeft<=0){setShowConfirm(false);goPlus();return;}
     setShowConfirm(false);setCompareLoading(true);
     const d=await liveSearch(selected.title);
-    useFree();setCompareData(d);setCompareLoading(false);
+    if(d.ok)useFree();
+    setCompareData(d);setCompareLoading(false);
   };
 
   const reset=()=>{setSuggestions(null);setSelected(null);setCompareData(null);setShowConfirm(false);setQ("");setBrand(null);clearCat();};
@@ -1677,7 +1681,7 @@ function AsuTool({back,isPlus,goPlus,favs,toggleFav,addList,profile}) {
       const filtered=d.results;
       let t=0;const c=[];
       for(const it of filtered){
-        if(t+(it.price||999)<=budget){c.push(it);t+=it.price||0;}
+        if(it.price!=null&&t+it.price<=budget){c.push(it);t+=it.price;}
       }
       setPicks({chosen:c,total:t});
     }else setPicks({error:d.error});
@@ -1822,7 +1826,7 @@ function ScreenSaasto({savings,hist,isPlus,goPlus}) {
           <button
             onClick={goPlus}
             style={{background:"linear-gradient(135deg,#C8960A,#FFD700,#FFBA08,#FFD700,#C8960A)",backgroundSize:"300% 300%",animation:"goldShimmer 3s ease infinite",border:"none",borderRadius:10,padding:"7px 13px",fontWeight:700,fontSize:13,color:"#3A2000",cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap",boxShadow:"0 2px 10px rgba(200,150,10,0.4)",flexShrink:0}}
-          >4,99 €/kk</button>
+          >{PLUS_PRICE}</button>
         </div>
       )}
       {savedItems.length===0&&<p style={{fontSize:12,color:S.mut}}>Ei vielä säästöjä. Merkitse tuote ostetuksi ostoslistalla.</p>}
@@ -2106,7 +2110,7 @@ function ScreenPlus({subscription,onActivate,onCancel,onReactivate}) {
             ["Tila","Aktiivinen 👑"],
             ["Seuraava veloitus",nextBilling||"—"],
             ["Tilaus alkaen",startDate||"—"],
-            ["Hinta","4,99 €/kk"],
+            ["Hinta",PLUS_PRICE],
           ].map(([label,val])=>(
             <div key={label} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:9}}>
               <span style={{fontSize:12,color:S.mut}}>{label}</span>
@@ -2182,7 +2186,7 @@ function ScreenPlus({subscription,onActivate,onCancel,onReactivate}) {
         </div>
 
         <button className="plus-activate-btn" onClick={onReactivate}>Jatka Plus-tilausta →</button>
-        <div style={{fontSize:11,color:S.mut,textAlign:"center",marginTop:8}}>Uusi laskutuskausi alkaa heti, 4,99 €/kk</div>
+        <div style={{fontSize:11,color:S.mut,textAlign:"center",marginTop:8}}>Uusi laskutuskausi alkaa heti, {PLUS_PRICE}</div>
       </div>
     );
   }
@@ -2196,7 +2200,7 @@ function ScreenPlus({subscription,onActivate,onCancel,onReactivate}) {
         <div style={{fontSize:26,fontWeight:500,color:"#fff",letterSpacing:"-0.3px"}}>Shoppailu PLUS <span style={{color:"#FFD700"}}>+</span></div>
         <div style={{fontSize:13,color:"rgba(255,255,255,0.75)",marginTop:6,marginBottom:20}}>{status==="expired"?"Tilauksesi on vanhentunut — aktivoi uudelleen.":"Osta fiksummin, säästä ja saa enemmän."}</div>
         <div style={{background:"rgba(255,255,255,0.1)",borderRadius:16,padding:"14px 24px",display:"inline-block",backdropFilter:"blur(4px)"}}>
-          <span className="gold-price-text" style={{fontSize:42,fontWeight:400}}>4,99 €</span>
+          <span className="gold-price-text" style={{fontSize:42,fontWeight:400}}>{PLUS_PRICE_SHORT}</span>
           <span style={{fontSize:14,color:"rgba(255,255,255,0.65)",marginLeft:6}}>/kk</span>
         </div>
         <div style={{marginTop:10,fontSize:11,color:"rgba(255,255,255,0.5)"}}>7 päivän ilmainen kokeilu · Peru milloin tahansa</div>
@@ -2365,7 +2369,7 @@ function ScreenProfiili({profile,setProfile,auth,onNameChange,changePassword,cha
         <div style={{fontSize:28,filter:"drop-shadow(0 2px 6px rgba(0,0,0,0.3))"}}>👑</div>
         <div style={{flex:1}}>
           <div style={{fontSize:13,fontWeight:500,color:"#fff"}}>Shoppailu <span style={{color:"#FFD700"}}>PLUS+</span></div>
-          <div style={{fontSize:11,color:"rgba(255,255,255,0.65)",marginTop:2}}>{isPlus?"Tilauksesi on aktiivinen":"4,99 €/kk · Peru milloin tahansa"}</div>
+          <div style={{fontSize:11,color:"rgba(255,255,255,0.65)",marginTop:2}}>{isPlus?"Tilauksesi on aktiivinen":{`${PLUS_PRICE} · Peru milloin tahansa`}}</div>
         </div>
         <div style={{fontSize:11,color:"rgba(255,255,255,0.8)",fontWeight:500,flexShrink:0}}>{isPlus?"Hallitse →":"Aktivoi →"}</div>
       </div>
@@ -2635,6 +2639,7 @@ function Auth({onSkip}) {
   // Sähköpostin vahvistus -tila: {email,pw} kun odotellaan vahvistusta
   const[verifyPending,setVerifyPending]=useState(null);
   const[resendCooldown,setResendCooldown]=useState(0);
+  const resendTimerRef=useRef(null);
   const[resendOk,setResendOk]=useState(false);
 
   const s=(k,v)=>{setF({...f,[k]:v});setError("");};
@@ -2648,9 +2653,13 @@ function Auth({onSkip}) {
   };
 
   const startResendCooldown=()=>{
+    if(resendTimerRef.current)clearInterval(resendTimerRef.current);
     setResendCooldown(60);
     let cd=60;
-    const iv=setInterval(()=>{cd--;setResendCooldown(cd);if(cd<=0)clearInterval(iv);},1000);
+    resendTimerRef.current=setInterval(()=>{
+      cd--;setResendCooldown(cd);
+      if(cd<=0){clearInterval(resendTimerRef.current);resendTimerRef.current=null;}
+    },1000);
   };
 
   const submit=async()=>{
@@ -2831,7 +2840,7 @@ function PlusUpsellPopup({onClose,onActivate}) {
           <div style={{display:"inline-block",background:"linear-gradient(135deg,#1FA463,#27AE7A)",borderRadius:12,padding:"6px 16px",marginBottom:10}}>
             <span style={{fontSize:12,fontWeight:700,color:"#fff",letterSpacing:"0.02em"}}>✨ 7 päivän ilmainen kokeilu</span>
           </div>
-          <div style={{fontSize:24,fontWeight:700,fontFamily:"monospace",color:S.ink}}>4,99 €<span style={{fontSize:13,fontWeight:400,color:S.mut}}>/kk</span></div>
+          <div style={{fontSize:24,fontWeight:700,fontFamily:"monospace",color:S.ink}}>{PLUS_PRICE_SHORT}<span style={{fontSize:13,fontWeight:400,color:S.mut}}>/kk</span></div>
           <div style={{fontSize:11,color:S.mut,marginTop:2}}>Peru milloin tahansa</div>
         </div>
         <div style={{...card(S.bg,S.brd),padding:"12px 14px",marginBottom:16}}>
