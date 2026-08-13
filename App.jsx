@@ -1241,6 +1241,7 @@ function ScreenKoti({go,listN,favN,spent,budget,savings,potentialSavings,goPlus,
 function ScreenHaku({isPlus,freeLeft,useFree,favs,toggleFav,addList,goPlus,recommItem,onClearRecomm,onTrackSearch}) {
   const[q,setQ]=useState("");
   const[catMain,setCatMain]=useState(null);
+  const[catGroup,setCatGroup]=useState(null);
   const[catSub,setCatSub]=useState(null);
   const[catSearchTerm,setCatSearchTerm]=useState("");
   const[showAllGroups,setShowAllGroups]=useState(false);
@@ -1269,6 +1270,7 @@ function ScreenHaku({isPlus,freeLeft,useFree,favs,toggleFav,addList,goPlus,recom
   },[recommItem]);
 
   const currentCat=catMain?CAT_TREE.find(c=>c.k===catMain):null;
+  const currentGroup=catGroup&&currentCat?currentCat.groups.find(g=>g.l===catGroup):null;
 
   const doSearch=async(fullQuery, searchOpts={})=>{
     const query=fullQuery.trim();if(!query)return;
@@ -1307,8 +1309,12 @@ function ScreenHaku({isPlus,freeLeft,useFree,favs,toggleFav,addList,goPlus,recom
   };
 
   const selectMainCat=cat=>{
-    setCatMain(cat.k);setCatSub(null);setCatSearchTerm(cat.s);setShowAllGroups(false);setBrand(null);
-    doSearch(buildQuery(cat.s,null), {catMain:cat.k, catSub:null, brand:null});
+    setCatMain(cat.k);setCatGroup(null);setCatSub(null);setCatSearchTerm(cat.s);setShowAllGroups(false);setBrand(null);
+    setSuggestions(null);setSelected(null);setCompareData(null);
+  };
+
+  const selectGroup=group=>{
+    setCatGroup(group.l);setCatSub(null);
   };
 
   const selectSub=sub=>{
@@ -1323,9 +1329,11 @@ function ScreenHaku({isPlus,freeLeft,useFree,favs,toggleFav,addList,goPlus,recom
   };
 
   const clearCat=()=>{
-    setCatMain(null);setCatSub(null);setCatSearchTerm("");setBrand(null);
+    setCatMain(null);setCatGroup(null);setCatSub(null);setCatSearchTerm("");setBrand(null);
     setSuggestions(null);setCompareData(null);setSelected(null);
   };
+  const goBackGroup=()=>{setCatGroup(null);setCatSub(null);};
+  const goBackMain=()=>{setCatMain(null);setCatGroup(null);setCatSub(null);setCatSearchTerm("");setBrand(null);setSuggestions(null);setCompareData(null);setSelected(null);};
 
   const selectProduct=(item)=>{setSelected(item);setShowConfirm(true);};
 
@@ -1337,13 +1345,30 @@ function ScreenHaku({isPlus,freeLeft,useFree,favs,toggleFav,addList,goPlus,recom
     setCompareData(d);setCompareLoading(false);
   };
 
-  const reset=()=>{setSuggestions(null);setSelected(null);setCompareData(null);setShowConfirm(false);setQ("");setBrand(null);clearCat();setFMin("");setFMax("");setFStores([]);setAutoSugg([]);setShowAuto(false);};
+  const reset=()=>{setSuggestions(null);setSelected(null);setCompareData(null);setShowConfirm(false);setQ("");setBrand(null);setCatGroup(null);clearCat();setFMin("");setFMax("");setFStores([]);setAutoSugg([]);setShowAuto(false);};
   const onQChange=v=>{setQ(v);const s=getAutoSugg(v,history);setAutoSugg(s);setShowAuto(s.length>0&&v.length>=2);};
   const pickAutoSugg=s=>{setQ(s);setAutoSugg([]);setShowAuto(false);const full=[brand,s,catSearchTerm].filter(Boolean).join(" ");setTimeout(()=>doSearch(full||s,{catMain,catSub,brand}),0);};
 
   const visibleGroups=currentCat
     ?(showAllGroups?currentCat.groups:currentCat.groups.slice(0,2))
     :[];
+
+  // Emoji-kuvakkeet ryhmille (käytetään kategoriahierarkiassa)
+  const GROUP_ICONS={
+    "Silmämeikit":"👁️","Huulimeikit":"💋","Kasvomeikit":"😊",
+    "Kynsimeikit ja kynsienhoito":"💅","Meikkipussit ja toilettilaukut":"👜","Meikkisiveltimet ja -välineet":"🖌️",
+    "Kasvojenhoito":"🌿","Silmänympäryshoito":"🔬","Erityisihonhoito":"✨","Aurinkosuoja ja rusketus":"☀️","Vartalonhoito":"💆",
+    "Hiustenhoito":"🚿","Hiustenmuotoilu":"💨","Hiusten värjäys":"🎨","Hiusten työkalut":"⚡","Hiusasusteet":"🎀",
+    "Partahoidon tuotteet":"🧴","Parranajo":"🪒","Parran muotoilu":"✂️",
+    "Peseytyminen":"🛁","Deodorantit":"🌬️","Hammashygienia":"🦷","Karvanpoisto":"✨","Kuukautishygienia":"🌸","Muut hygieniatuotteet":"🧼",
+    "Hajuvedet":"🌸","Erikoistuoksut":"💎","Kodin tuoksut":"🕯️",
+    "Yläosat":"👚","Alaosat":"👖","Päällysvaatteet":"🧥","Alusvaatteet ja yöasut":"🩲","Urheiluvaatteet":"🏃",
+    "Vapaa-ajan kengät":"👟","Juhlakengät":"👠","Saappaat":"🥾","Urheilukengät":"🏃","Kotikengät":"🏠",
+    "Käsilaukut":"👜","Reput ja muut":"🎒","Pienet nahkatavarat":"💳",
+    "Korutyypit":"💍","Korusetit ja materiaalit":"✨",
+    "Kellot":"⌚",
+    "Päähineet":"🎩","Kaulaliinat ja huivit":"🧣","Käsineet":"🧤","Muut asusteet":"🕶️",
+  };
 
   return(
     <div>
@@ -1393,43 +1418,48 @@ function ScreenHaku({isPlus,freeLeft,useFree,favs,toggleFav,addList,goPlus,recom
           </div>
         </div>
 
-        {/* Alakategoriat — näytetään kun pääkategoria valittu */}
-        {currentCat&&(
+        {/* Taso 2: Ryhmät — näytetään kun pääkategoria valittu mutta ryhmää ei vielä */}
+        {currentCat&&!catGroup&&(
           <div style={{...card(S.bg,S.brd),padding:12,marginBottom:10}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+              <button onClick={goBackMain} style={{background:"none",border:"none",fontSize:11,color:S.mut,cursor:"pointer",fontFamily:FF,padding:0}}>← Takaisin</button>
               <span style={{fontSize:13,fontWeight:700,color:S.ink}}>{currentCat.i} {currentCat.l}</span>
-              <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                {currentCat.groups.length>2&&(
-                  <button onClick={()=>setShowAllGroups(!showAllGroups)}
-                    style={{background:"none",border:"none",fontSize:11,color:S.rose,cursor:"pointer",fontWeight:600,fontFamily:FF}}>
-                    {showAllGroups?"Näytä vähemmän ▲":"Kaikki alakategoriat ▼"}
-                  </button>
-                )}
-                <button onClick={clearCat}
-                  style={{background:"none",border:"none",fontSize:11,color:S.mut,cursor:"pointer",fontFamily:FF}}>
-                  ✕
-                </button>
-              </div>
+              <button onClick={clearCat} style={{background:"none",border:"none",fontSize:11,color:S.mut,cursor:"pointer",fontFamily:FF,marginLeft:"auto"}}>✕</button>
             </div>
-            {visibleGroups.map(group=>(
-              <div key={group.l} style={{marginBottom:10}}>
-                <p style={{fontSize:10,fontWeight:700,color:S.mut,margin:"0 0 5px",textTransform:"uppercase",letterSpacing:"0.06em"}}>{group.l}</p>
-                <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-                  {group.items.map(sub=>(
-                    <button key={sub.k} onClick={()=>selectSub(sub)}
-                      style={{padding:"5px 12px",borderRadius:14,fontSize:11.5,fontWeight:500,cursor:"pointer",fontFamily:FF,
-                        border:"1px solid "+(catSub===sub.k?S.rose:S.brd),
-                        background:catSub===sub.k?S.rose:S.rs,
-                        color:catSub===sub.k?S.wh:S.rd}}>
-                      {sub.l}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ))}
-            {!showAllGroups&&currentCat.groups.length>2&&(
-              <p style={{fontSize:10.5,color:S.mut,margin:0}}>+{currentCat.groups.length-2} ryhmää lisää — paina "Kaikki alakategoriat"</p>
-            )}
+            <div style={{display:"flex",flexDirection:"column",gap:6}}>
+              {currentCat.groups.map(group=>(
+                <button key={group.l} onClick={()=>selectGroup(group)}
+                  style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderRadius:14,
+                    background:S.wh,border:"1.5px solid "+S.brd,cursor:"pointer",textAlign:"left",fontFamily:FF,
+                    fontSize:13,fontWeight:600,color:S.ink}}>
+                  <span style={{fontSize:18,minWidth:24,textAlign:"center"}}>{GROUP_ICONS[group.l]||"›"}</span>
+                  <span style={{flex:1}}>{group.l}</span>
+                  <span style={{fontSize:11,color:S.mut}}>{group.items.length} kpl ›</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Taso 3: Alakategoriat — näytetään kun ryhmä valittu */}
+        {currentCat&&catGroup&&currentGroup&&(
+          <div style={{...card(S.bg,S.brd),padding:12,marginBottom:10}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+              <button onClick={goBackGroup} style={{background:"none",border:"none",fontSize:11,color:S.rose,cursor:"pointer",fontFamily:FF,padding:0,fontWeight:600}}>← {currentCat.l}</button>
+              <span style={{fontSize:13,fontWeight:700,color:S.ink}}>{GROUP_ICONS[currentGroup.l]||""} {currentGroup.l}</span>
+              <button onClick={clearCat} style={{background:"none",border:"none",fontSize:11,color:S.mut,cursor:"pointer",fontFamily:FF,marginLeft:"auto"}}>✕</button>
+            </div>
+            <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+              {currentGroup.items.map(sub=>(
+                <button key={sub.k} onClick={()=>selectSub(sub)}
+                  style={{padding:"6px 13px",borderRadius:14,fontSize:12,fontWeight:500,cursor:"pointer",fontFamily:FF,
+                    border:"1px solid "+(catSub===sub.k?S.rose:S.brd),
+                    background:catSub===sub.k?S.rose:S.rs,
+                    color:catSub===sub.k?S.wh:S.rd}}>
+                  {sub.l}
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
