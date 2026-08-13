@@ -3465,7 +3465,9 @@ function App() {
             if(d.list)setList(d.list);
             if(d.hist)setHist(d.hist);
             if(d.savings!=null)setSavings(d.savings);
+            // Lue budjetti: budgetD on ensisijainen, profile.budjetti on varasuunnitelma (vanha rakenne)
             if(d.budgetD!=null)setBudgetD(d.budgetD);
+            else if(d.profile?.budjetti!=null)setBudgetD(d.profile.budjetti);
             if(d.subscription){
               const sub=d.subscription;
               setSubscription(sub);
@@ -3555,7 +3557,7 @@ function App() {
   const addList=(item)=>{
     const price=item.price||0;
     const newSpent=hist.reduce((s,p)=>s+(p.price||0),0)+list.reduce((s,it)=>s+(it.price||0),0)+price;
-    if(price>0&&newSpent>profile.budjetti)alert(`⚠️ Tämä ostos ylittäisi kuukausibudjettisi (${eur(profile.budjetti)}). Yhteensä tulisi ${eur(newSpent)}.`);
+    if(price>0&&newSpent>budgetD)alert(`⚠️ Tämä ostos ylittäisi kuukausibudjettisi (${eur(budgetD)}). Yhteensä tulisi ${eur(newSpent)}.`);
     const nl=[...list,{...item,addedAt:Date.now()}];
     setList(nl);save({list:nl});
     // Seuraa ostoslistalle lisäys suosituksia varten
@@ -3606,8 +3608,8 @@ function App() {
 
   const saveBudget=(val)=>{
     const v=val??budgetD;
-    const np={...profile,budjetti:v};
-    setProfileState(np);save({profile:np,budgetD:v});
+    setBudgetD(v);
+    save({budgetD:v}); // Ei kosketa profile-kenttään — vältetään race condition
   };
 
   const trackBehavior=(item)=>{
@@ -3695,7 +3697,7 @@ function App() {
   // Keep-alive: kaikki näkymät mountataan kerran, vain CSS-näkyvyys vaihtuu.
   // State säilyy navigoinnin yli eikä resetoidu.
   const SCREENS=[
-    ["koti",     <ScreenKoti go={navigate} listN={list.length} favN={favs.length} spent={spent} budget={profile.budjetti} savings={savings} potentialSavings={potentialSavings} goPlus={goPlus} alertBudget={!!profile.alertBudget} profileRecs={profileRecs} behavior={behavior} onRecomm={handleRecomm}/>],
+    ["koti",     <ScreenKoti go={navigate} listN={list.length} favN={favs.length} spent={spent} budget={budgetD} savings={savings} potentialSavings={potentialSavings} goPlus={goPlus} alertBudget={!!profile.alertBudget} profileRecs={profileRecs} behavior={behavior} onRecomm={handleRecomm}/>],
     ["haku",     <ScreenHaku isPlus={isPlus} freeLeft={freeLeft} useFree={useFree} favs={favs} toggleFav={toggleFav} addList={addList} goPlus={goPlus} recommItem={recommItem} onClearRecomm={()=>setRecommItem(null)} onTrackSearch={trackBehavior}/>],
     ["skannaa",  <ScreenSkannaa isPlus={isPlus} freeLeft={freeLeft} useFree={useFree} favs={favs} toggleFav={toggleFav} addList={addList} goPlus={goPlus}/>],
     ["ai",       <ScreenAI isPlus={isPlus} goPlus={goPlus} favs={favs} toggleFav={toggleFav} addList={addList} profile={profile}/>],
