@@ -3435,6 +3435,8 @@ function App() {
       setFbUser(user);
       if(user){
         try{
+          // Päivitä lastSeen aina kun käyttäjä avaa sovelluksen
+          setDoc(doc(fbDb,'users',user.uid),{lastSeen:new Date().toISOString()},{merge:true}).catch(console.error);
           const snap=await getDoc(doc(fbDb,'users',user.uid));
           const curMonth=new Date().toISOString().slice(0,7);
           if(snap.exists()){
